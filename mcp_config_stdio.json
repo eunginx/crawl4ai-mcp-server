@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "crawl4ai-rag": {
+      "command": "/Users/kapilh/mcp-crawl4ai/.venv-312/bin/python",
+      "args": [
+        "-m",
+        "src.crawl4ai_mcp"
+      ],
+      "env": {
+        "PYTHONPATH": "/Users/kapilh/mcp-crawl4ai",
+        "TRANSPORT": "stdio",
+        "LOGLEVEL": "INFO"
+      },
+      "disabled": false
+    }
+  }
+}

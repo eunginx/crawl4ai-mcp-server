@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "/Users/kapilh/mcp-crawl4ai/src/crawl4ai_mcp.py", line 16, in <module>
+    from sentence_transformers import CrossEncoder
+ModuleNotFoundError: No module named 'sentence_transformers'
