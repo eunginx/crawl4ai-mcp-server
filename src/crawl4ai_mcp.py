@@ -7,13 +7,16 @@ Also includes AI hallucination detection and repository parsing tools using Neo4
 """
 import os
 import certifi
+import logging
+import datetime
+from logging.handlers import RotatingFileHandler
 
 # Force SSL certificate validation for all HTTP clients
 os.environ["SSL_CERT_FILE"] = certifi.where()
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 
 from mcp.server.fastmcp import FastMCP, Context
-from sentence_transformers import CrossEncoder
+# from sentence_transformers import CrossEncoder  # Moved to local import to avoid circular dependency
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -75,12 +78,31 @@ from parse_repo_into_neo4j import DirectNeo4jExtractor
 from ai_script_analyzer import AIScriptAnalyzer
 from hallucination_reporter import HallucinationReporter
 
+# Force MCP working directory to project root
+MCP_ROOT = Path(__file__).resolve().parent.parent
+os.chdir(MCP_ROOT)
+
 # Load environment variables from the project root .env file
-project_root = Path(__file__).resolve().parent.parent
+project_root = MCP_ROOT
 dotenv_path = project_root / '.env'
 
 # Force override of existing environment variables
 load_dotenv(dotenv_path, override=True)
+
+# Configure logging for MCP server
+def setup_logging():
+    """Disable all logging output for the MCP server to avoid stdout/stderr interference."""
+    # Return a disabled logger with a NullHandler so all log calls become no-ops
+    logger = logging.getLogger("mcp_crawl4ai_quiet")
+    logger.handlers.clear()
+    logger.addHandler(logging.NullHandler())
+    logger.setLevel(logging.CRITICAL)
+    logger.propagate = False
+    logger.disabled = True
+    return logger
+
+# Initialize logging
+mcp_logger = setup_logging()
 
 # Helper functions for Neo4j validation and error handling
 def validate_neo4j_connection() -> bool:
@@ -145,7 +167,7 @@ class Crawl4AIContext:
     """Context for the Crawl4AI MCP server."""
     crawler: AsyncWebCrawler
     supabase_client: Client
-    reranking_model: Optional[CrossEncoder] = None
+    reranking_model: Optional[Any] = None
     knowledge_validator: Optional[Any] = None  # KnowledgeGraphValidator when available
     repo_extractor: Optional[Any] = None       # DirectNeo4jExtractor when available
 
@@ -160,94 +182,138 @@ async def crawl4ai_lifespan(server: FastMCP) -> AsyncIterator[Crawl4AIContext]:
     Yields:
         Crawl4AIContext: The context containing the Crawl4AI crawler and Supabase client
     """
-    # Create browser configuration
-    browser_config = BrowserConfig(
-        headless=True,
-        verbose=False
-    )
-    
-    # Initialize the crawler
-    crawler = AsyncWebCrawler(config=browser_config)
-    await crawler.__aenter__()
-    
-    # Initialize Supabase client
-    supabase_client = get_supabase_client()
-    
-    # Initialize cross-encoder model for reranking if enabled
-    reranking_model = None
-    if os.getenv("USE_RERANKING", "false") == "true":
-        try:
-            reranking_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-        except Exception as e:
-            print(f"Failed to load reranking model: {e}")
-            reranking_model = None
-    
-    # Initialize Neo4j components if configured and enabled
-    knowledge_validator = None
-    repo_extractor = None
-    
-    # Check if knowledge graph functionality is enabled
-    knowledge_graph_enabled = os.getenv("USE_KNOWLEDGE_GRAPH", "false") == "true"
-    
-    if knowledge_graph_enabled:
-        neo4j_uri = os.getenv("NEO4J_URI")
-        neo4j_user = os.getenv("NEO4J_USER")
-        neo4j_password = os.getenv("NEO4J_PASSWORD")
-        
-        if neo4j_uri and neo4j_user and neo4j_password:
-            try:
-                print("Initializing knowledge graph components...")
-                
-                # Initialize knowledge graph validator
-                knowledge_validator = KnowledgeGraphValidator(neo4j_uri, neo4j_user, neo4j_password)
-                await knowledge_validator.initialize()
-                print("✓ Knowledge graph validator initialized")
-                
-                # Initialize repository extractor
-                repo_extractor = DirectNeo4jExtractor(neo4j_uri, neo4j_user, neo4j_password)
-                await repo_extractor.initialize()
-                print("✓ Repository extractor initialized")
-                
-            except Exception as e:
-                print(f"Failed to initialize Neo4j components: {format_neo4j_error(e)}")
-                knowledge_validator = None
-                repo_extractor = None
-        else:
-            print("Neo4j credentials not configured - knowledge graph tools will be unavailable")
-    else:
-        print("Knowledge graph functionality disabled - set USE_KNOWLEDGE_GRAPH=true to enable")
+    mcp_logger.info("=== MCP Server Lifecycle Starting ===")
+    mcp_logger.info("Initializing Crawl4AI components...")
     
     try:
-        yield Crawl4AIContext(
-            crawler=crawler,
-            supabase_client=supabase_client,
-            reranking_model=reranking_model,
-            knowledge_validator=knowledge_validator,
-            repo_extractor=repo_extractor
+        # Create browser configuration
+        mcp_logger.debug("Creating browser configuration...")
+        browser_config = BrowserConfig(
+            headless=True,
+            verbose=False
         )
-    finally:
-        # Clean up all components
-        await crawler.__aexit__(None, None, None)
-        if knowledge_validator:
+        mcp_logger.debug(f"Browser config created: headless={browser_config.headless}, verbose={browser_config.verbose}")
+        
+        # Initialize the crawler
+        mcp_logger.info("Initializing AsyncWebCrawler...")
+        crawler = AsyncWebCrawler(config=browser_config)
+        await crawler.__aenter__()
+        mcp_logger.info("✓ AsyncWebCrawler initialized successfully")
+        
+        # Initialize Supabase client
+        mcp_logger.info("Initializing Supabase client...")
+        supabase_client = get_supabase_client()
+        mcp_logger.info("✓ Supabase client initialized")
+        
+        # Initialize cross-encoder model for reranking if enabled
+        mcp_logger.info("Checking reranking configuration...")
+        reranking_model = None
+        use_reranking = os.getenv("USE_RERANKING", "false")
+        mcp_logger.debug(f"USE_RERANKING environment variable: {use_reranking}")
+        
+        if use_reranking == "true":
             try:
-                await knowledge_validator.close()
-                print("✓ Knowledge graph validator closed")
+                mcp_logger.info("Loading cross-encoder model for reranking...")
+                from sentence_transformers import CrossEncoder  # Local import
+                reranking_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+                mcp_logger.info("✓ Cross-encoder model loaded successfully")
             except Exception as e:
-                print(f"Error closing knowledge validator: {e}")
-        if repo_extractor:
-            try:
-                await repo_extractor.close()
-                print("✓ Repository extractor closed")
-            except Exception as e:
-                print(f"Error closing repository extractor: {e}")
+                mcp_logger.error(f"Failed to load reranking model: {e}")
+                reranking_model = None
+        else:
+            mcp_logger.info("Reranking disabled")
+        
+        # Initialize Neo4j components if configured and enabled
+        mcp_logger.info("Checking knowledge graph configuration...")
+        knowledge_validator = None
+        repo_extractor = None
+        
+        # Check if knowledge graph functionality is enabled
+        knowledge_graph_enabled = os.getenv("USE_KNOWLEDGE_GRAPH", "false")
+        mcp_logger.debug(f"USE_KNOWLEDGE_GRAPH environment variable: {knowledge_graph_enabled}")
+        
+        if knowledge_graph_enabled == "true":
+            neo4j_uri = os.getenv("NEO4J_URI")
+            neo4j_user = os.getenv("NEO4J_USER")
+            neo4j_password = os.getenv("NEO4J_PASSWORD")
+            
+            mcp_logger.debug(f"Neo4j configuration check: URI={'configured' if neo4j_uri else 'missing'}, User={'configured' if neo4j_user else 'missing'}, Password={'configured' if neo4j_password else 'missing'}")
+            
+            if neo4j_uri and neo4j_user and neo4j_password:
+                try:
+                    mcp_logger.info("Initializing knowledge graph components...")
+                    
+                    # Initialize knowledge graph validator
+                    mcp_logger.debug("Initializing KnowledgeGraphValidator...")
+                    knowledge_validator = KnowledgeGraphValidator(neo4j_uri, neo4j_user, neo4j_password)
+                    await knowledge_validator.initialize()
+                    mcp_logger.info("✓ Knowledge graph validator initialized")
+                    
+                    # Initialize repository extractor
+                    mcp_logger.debug("Initializing DirectNeo4jExtractor...")
+                    repo_extractor = DirectNeo4jExtractor(neo4j_uri, neo4j_user, neo4j_password)
+                    await repo_extractor.initialize()
+                    mcp_logger.info("✓ Repository extractor initialized")
+                    
+                except Exception as e:
+                    mcp_logger.error(f"Failed to initialize Neo4j components: {format_neo4j_error(e)}")
+                    knowledge_validator = None
+                    repo_extractor = None
+            else:
+                mcp_logger.warning("Neo4j credentials not configured - knowledge graph tools will be unavailable")
+        else:
+            mcp_logger.info("Knowledge graph functionality disabled - set USE_KNOWLEDGE_GRAPH=true to enable")
+        
+        mcp_logger.info("=== MCP Server Initialization Complete ===")
+        
+        try:
+            yield Crawl4AIContext(
+                crawler=crawler,
+                supabase_client=supabase_client,
+                reranking_model=reranking_model,
+                knowledge_validator=knowledge_validator,
+                repo_extractor=repo_extractor
+            )
+        finally:
+            mcp_logger.info("=== MCP Server Cleanup Starting ===")
+            # Clean up all components
+            mcp_logger.info("Cleaning up AsyncWebCrawler...")
+            await crawler.__aexit__(None, None, None)
+            mcp_logger.info("✓ AsyncWebCrawler cleaned up")
+            
+            if knowledge_validator:
+                try:
+                    mcp_logger.info("Cleaning up knowledge graph validator...")
+                    await knowledge_validator.close()
+                    mcp_logger.info("✓ Knowledge graph validator closed")
+                except Exception as e:
+                    mcp_logger.error(f"Error closing knowledge validator: {e}")
+            
+            if repo_extractor:
+                try:
+                    mcp_logger.info("Cleaning up repository extractor...")
+                    await repo_extractor.close()
+                    mcp_logger.info("✓ Repository extractor closed")
+                except Exception as e:
+                    mcp_logger.error(f"Error closing repository extractor: {e}")
+            
+            mcp_logger.info("=== MCP Server Lifecycle Complete ===")
+            
+    except Exception as e:
+        mcp_logger.critical(f"Critical error during MCP server initialization: {e}")
+        raise
 
 # Initialize FastMCP server with lifespan
+# Support both stdio (default) and HTTP/SSE via environment variables
+# If HOST/PORT are provided, FastMCP can bind to that address for independent serving
 mcp = FastMCP(
     "mcp-crawl4ai-rag",
     lifespan=crawl4ai_lifespan,
+    host=os.getenv("HOST", None) or None,
+    port=os.getenv("PORT", None) or None,
 )
 
-def rerank_results(model: CrossEncoder, query: str, results: List[Dict[str, Any]], content_key: str = "content") -> List[Dict[str, Any]]:
+def rerank_results(model: Any, query: str, results: List[Dict[str, Any]], content_key: str = "content") -> List[Dict[str, Any]]:
     """
     Rerank search results using a cross-encoder model.
     
@@ -282,7 +348,7 @@ def rerank_results(model: CrossEncoder, query: str, results: List[Dict[str, Any]
         
         return reranked
     except Exception as e:
-        print(f"Error during reranking: {e}")
+        mcp_logger.error(f"Error during reranking: {e}")
         return results
 
 def is_sitemap(url: str) -> bool:
@@ -327,7 +393,7 @@ def parse_sitemap(sitemap_url: str) -> List[str]:
             tree = ElementTree.fromstring(resp.content)
             urls = [loc.text for loc in tree.findall('.//{*}loc')]
         except Exception as e:
-            print(f"Error parsing sitemap XML: {e}")
+            mcp_logger.error(f"Error parsing sitemap XML: {e}")
 
     return urls
 
@@ -412,6 +478,7 @@ def process_code_example(args):
 def ensure_source_exists(supabase, source_id: str):
     """Ensure source exists in sources table (idempotent)."""
     try:
+        mcp_logger.debug(f"Checking if source exists: {source_id}")
         existing = (
             supabase.table("sources")
             .select("source_id")
@@ -420,16 +487,18 @@ def ensure_source_exists(supabase, source_id: str):
         )
 
         if existing.data:
+            mcp_logger.debug(f"Source {source_id} already exists")
             return
 
+        mcp_logger.info(f"Creating new source: {source_id}")
         supabase.table("sources").insert({
             "source_id": source_id,
             "summary": None,
             "total_word_count": 0,
         }).execute()
-        print(f"✔ Source {source_id} created")
+        mcp_logger.info(f"✔ Source {source_id} created successfully")
     except Exception as e:
-        print(f"Error ensuring source exists: {e}")
+        mcp_logger.error(f"Error ensuring source exists for {source_id}: {e}")
         # Don't re-raise, just continue
 
 @mcp.tool()
@@ -447,29 +516,44 @@ async def crawl_single_page(ctx: Context, url: str) -> str:
     Returns:
         Summary of the crawling operation and storage in Supabase
     """
+    mcp_logger.info(f"=== Starting crawl_single_page ===")
+    mcp_logger.info(f"Target URL: {url}")
+    
     try:
         # Get the crawler and supabase client from the lifespan context
+        mcp_logger.debug("Retrieving crawler and Supabase client from context...")
         lifespan = ctx.request_context.lifespan_context
         crawler = lifespan.crawler
         supabase_client = lifespan.supabase_client
+        mcp_logger.debug("✓ Retrieved components from context")
         
         # Configure the crawl
+        mcp_logger.debug("Configuring crawl run settings...")
         run_config = CrawlerRunConfig(cache_mode=CacheMode.BYPASS, stream=False)
+        mcp_logger.debug(f"Crawl config: cache_mode=BYPASS, stream=False")
         
         # Crawl the page
+        mcp_logger.info(f"Starting crawl of URL: {url}")
         result = await crawler.arun(url=url, config=run_config)
+        mcp_logger.info(f"Crawl completed - Success: {result.success}")
         
         if result.success and result.markdown:
+            mcp_logger.info(f"✓ Page crawled successfully - Content length: {len(result.markdown)} chars")
+            
             # Extract source_id
             parsed_url = urlparse(url)
             source_id = parsed_url.netloc or parsed_url.path
-            print(f"DEBUG: Extracted source_id: {source_id}")
+            mcp_logger.debug(f"Extracted source_id: {source_id}")
             
             # Ensure source exists FIRST (idempotent)
+            mcp_logger.debug(f"Ensuring source exists in database: {source_id}")
             ensure_source_exists(supabase_client, source_id)
+            mcp_logger.debug("✓ Source ensured in database")
             
             # Chunk the content
+            mcp_logger.debug("Chunking markdown content...")
             chunks = smart_chunk_markdown(result.markdown)
+            mcp_logger.info(f"✓ Content chunked into {len(chunks)} chunks")
             
             # Prepare data for Supabase
             urls = []
@@ -478,6 +562,7 @@ async def crawl_single_page(ctx: Context, url: str) -> str:
             metadatas = []
             total_word_count = 0
             
+            mcp_logger.debug("Preparing chunk data for Supabase storage...")
             for i, chunk in enumerate(chunks):
                 urls.append(url)
                 chunk_numbers.append(i)
@@ -494,20 +579,32 @@ async def crawl_single_page(ctx: Context, url: str) -> str:
                 # Accumulate word count
                 total_word_count += meta.get("word_count", 0)
             
+            mcp_logger.debug(f"✓ Prepared {len(chunks)} chunks for storage")
+            
             # Create url_to_full_document mapping
             url_to_full_document = {url: result.markdown}
             
             # Update source information FIRST (before inserting documents)
+            mcp_logger.debug("Updating source information...")
             source_summary = extract_source_summary(source_id, result.markdown[:5000])  # Use first 5000 chars for summary
             update_source_info(supabase_client, source_id, source_summary, total_word_count)
+            mcp_logger.info(f"✓ Source information updated - Total words: {total_word_count}")
             
             # Add documentation chunks to Supabase (AFTER source exists)
+            mcp_logger.info("Storing documentation chunks in Supabase...")
             add_documents_to_supabase(supabase_client, urls, chunk_numbers, contents, metadatas, url_to_full_document)
+            mcp_logger.info(f"✓ Stored {len(chunks)} documentation chunks in Supabase")
             
             # Extract and process code examples only if enabled
-            extract_code_examples = os.getenv("USE_AGENTIC_RAG", "false") == "true"
-            if extract_code_examples:
+            code_blocks = []
+            extract_code_examples = os.getenv("USE_AGENTIC_RAG", "false")
+            mcp_logger.debug(f"USE_AGENTIC_RAG setting: {extract_code_examples}")
+            
+            if extract_code_examples == "true":
+                mcp_logger.info("Extracting code examples from content...")
                 code_blocks = extract_code_blocks(result.markdown)
+                mcp_logger.info(f"Found {len(code_blocks)} code blocks")
+                
                 if code_blocks:
                     code_urls = []
                     code_chunk_numbers = []
@@ -516,6 +613,7 @@ async def crawl_single_page(ctx: Context, url: str) -> str:
                     code_metadatas = []
                     
                     # Process code examples in parallel
+                    mcp_logger.debug("Processing code examples with parallel execution...")
                     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
                         # Prepare arguments for parallel processing
                         summary_args = [(block['code'], block['context_before'], block['context_after']) 
@@ -523,6 +621,8 @@ async def crawl_single_page(ctx: Context, url: str) -> str:
                         
                         # Generate summaries in parallel
                         summaries = list(executor.map(process_code_example, summary_args))
+                    
+                    mcp_logger.debug("✓ Code example summaries generated")
                     
                     # Prepare code example data
                     for i, (block, summary) in enumerate(zip(code_blocks, summaries)):
@@ -542,6 +642,7 @@ async def crawl_single_page(ctx: Context, url: str) -> str:
                         code_metadatas.append(code_meta)
                     
                     # Add code examples to Supabase
+                    mcp_logger.info("Storing code examples in Supabase...")
                     add_code_examples_to_supabase(
                         supabase_client, 
                         code_urls, 
@@ -550,8 +651,11 @@ async def crawl_single_page(ctx: Context, url: str) -> str:
                         code_summaries, 
                         code_metadatas
                     )
+                    mcp_logger.info(f"✓ Stored {len(code_examples)} code examples in Supabase")
+            else:
+                mcp_logger.info("Code example extraction disabled")
             
-            return json.dumps({
+            response_data = {
                 "success": True,
                 "url": url,
                 "chunks_stored": len(chunks),
@@ -563,14 +667,21 @@ async def crawl_single_page(ctx: Context, url: str) -> str:
                     "internal": len(result.links.get("internal", [])),
                     "external": len(result.links.get("external", []))
                 }
-            }, indent=2)
+            }
+            
+            mcp_logger.info(f"=== crawl_single_page completed successfully ===")
+            mcp_logger.info(f"Results: {len(chunks)} chunks, {len(code_blocks) if code_blocks else 0} code examples, {total_word_count} words")
+            
+            return json.dumps(response_data, indent=2)
         else:
+            mcp_logger.error(f"Crawl failed for URL {url}: {result.error_message}")
             return json.dumps({
                 "success": False,
                 "url": url,
                 "error": result.error_message
             }, indent=2)
     except Exception as e:
+        mcp_logger.error(f"Exception in crawl_single_page for URL {url}: {e}")
         return json.dumps({
             "success": False,
             "url": url,
@@ -599,24 +710,35 @@ async def smart_crawl_url(ctx: Context, url: str, max_depth: int = 3, max_concur
     Returns:
         JSON string with crawl summary and storage information
     """
+    mcp_logger.info(f"=== Starting smart_crawl_url ===")
+    mcp_logger.info(f"Target URL: {url}")
+    mcp_logger.info(f"Parameters: max_depth={max_depth}, max_concurrent={max_concurrent}, chunk_size={chunk_size}")
+    
     try:
         # Get the crawler and supabase client from the lifespan context
+        mcp_logger.debug("Retrieving crawler and Supabase client from context...")
         lifespan = ctx.request_context.lifespan_context
         crawler = lifespan.crawler
         supabase_client = lifespan.supabase_client
+        mcp_logger.debug("✓ Retrieved components from context")
         
         # Determine the crawl strategy
+        mcp_logger.info("Determining crawl strategy...")
         crawl_results = []
         crawl_type = None
         
         if is_txt(url):
+            mcp_logger.info("URL type detected: TEXT FILE")
             # For text files, use simple crawl
             crawl_results = await crawl_markdown_file(crawler, url)
             crawl_type = "text_file"
         elif is_sitemap(url):
+            mcp_logger.info("URL type detected: SITEMAP")
             # For sitemaps, extract URLs and crawl in parallel
             sitemap_urls = parse_sitemap(url)
+            mcp_logger.info(f"Found {len(sitemap_urls)} URLs in sitemap")
             if not sitemap_urls:
+                mcp_logger.warning("No URLs found in sitemap")
                 return json.dumps({
                     "success": False,
                     "url": url,
@@ -625,11 +747,16 @@ async def smart_crawl_url(ctx: Context, url: str, max_depth: int = 3, max_concur
             crawl_results = await crawl_batch(crawler, sitemap_urls, max_concurrent=max_concurrent)
             crawl_type = "sitemap"
         else:
+            mcp_logger.info("URL type detected: REGULAR WEBPAGE")
             # For regular URLs, use recursive crawl
             crawl_results = await crawl_recursive_internal_links(crawler, [url], max_depth=max_depth, max_concurrent=max_concurrent)
             crawl_type = "webpage"
         
+        mcp_logger.info(f"Crawl strategy: {crawl_type}")
+        mcp_logger.info(f"Crawled {len(crawl_results)} pages")
+        
         if not crawl_results:
+            mcp_logger.error("No content found during crawl")
             return json.dumps({
                 "success": False,
                 "url": url,
@@ -637,6 +764,7 @@ async def smart_crawl_url(ctx: Context, url: str, max_depth: int = 3, max_concur
             }, indent=2)
         
         # Process results and store in Supabase
+        mcp_logger.info("Processing crawl results for storage...")
         urls = []
         chunk_numbers = []
         contents = []
@@ -648,6 +776,7 @@ async def smart_crawl_url(ctx: Context, url: str, max_depth: int = 3, max_concur
         source_word_counts = {}
         
         # Process documentation chunks
+        mcp_logger.debug("Processing documentation chunks...")
         for doc in crawl_results:
             source_url = doc['url']
             md = doc['markdown']
@@ -681,12 +810,15 @@ async def smart_crawl_url(ctx: Context, url: str, max_depth: int = 3, max_concur
                 
                 chunk_count += 1
         
+        mcp_logger.info(f"✓ Processed {chunk_count} total chunks from {len(crawl_results)} pages")
+        
         # Create url_to_full_document mapping
         url_to_full_document = {}
         for doc in crawl_results:
             url_to_full_document[doc['url']] = doc['markdown']
         
         # Update source information for each unique source FIRST (before inserting documents)
+        mcp_logger.debug(f"Updating source information for {len(source_content_map)} sources...")
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             source_summary_args = [(source_id, content) for source_id, content in source_content_map.items()]
             source_summaries = list(executor.map(lambda args: extract_source_summary(args[0], args[1]), source_summary_args))
@@ -695,17 +827,25 @@ async def smart_crawl_url(ctx: Context, url: str, max_depth: int = 3, max_concur
             word_count = source_word_counts.get(source_id, 0)
             update_source_info(supabase_client, source_id, summary, word_count)
         
+        mcp_logger.info(f"✓ Updated source information for {len(source_content_map)} sources")
+        
         # Add documentation chunks to Supabase (AFTER sources exist)
+        mcp_logger.info("Storing documentation chunks in Supabase...")
         batch_size = 20
         add_documents_to_supabase(supabase_client, urls, chunk_numbers, contents, metadatas, url_to_full_document, batch_size=batch_size)
+        mcp_logger.info(f"✓ Stored {chunk_count} documentation chunks in Supabase")
         
         # Extract and process code examples from all documents only if enabled
-        extract_code_examples_enabled = os.getenv("USE_AGENTIC_RAG", "false") == "true"
-        if extract_code_examples_enabled:
+        code_examples = []
+        extract_code_examples_enabled = os.getenv("USE_AGENTIC_RAG", "false")
+        mcp_logger.debug(f"USE_AGENTIC_RAG setting: {extract_code_examples_enabled}")
+        
+        if extract_code_examples_enabled == "true":
+            mcp_logger.info("Extracting code examples from all crawled content...")
             all_code_blocks = []
             code_urls = []
             code_chunk_numbers = []
-            code_examples = []
+            code_examples_list = []
             code_summaries = []
             code_metadatas = []
             
@@ -716,6 +856,8 @@ async def smart_crawl_url(ctx: Context, url: str, max_depth: int = 3, max_concur
                 code_blocks = extract_code_blocks(md)
                 
                 if code_blocks:
+                    mcp_logger.debug(f"Processing {len(code_blocks)} code blocks from {source_url}")
+                    
                     # Process code examples in parallel
                     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
                         # Prepare arguments for parallel processing
@@ -731,13 +873,13 @@ async def smart_crawl_url(ctx: Context, url: str, max_depth: int = 3, max_concur
                     
                     for i, (block, summary) in enumerate(zip(code_blocks, summaries)):
                         code_urls.append(source_url)
-                        code_chunk_numbers.append(len(code_examples))  # Use global code example index
-                        code_examples.append(block['code'])
+                        code_chunk_numbers.append(len(code_examples_list))  # Use global code example index
+                        code_examples_list.append(block['code'])
                         code_summaries.append(summary)
                         
                         # Create metadata for code example
                         code_meta = {
-                            "chunk_index": len(code_examples) - 1,
+                            "chunk_index": len(code_examples_list) - 1,
                             "url": source_url,
                             "source": source_id,
                             "char_count": len(block['code']),
@@ -746,18 +888,25 @@ async def smart_crawl_url(ctx: Context, url: str, max_depth: int = 3, max_concur
                         code_metadatas.append(code_meta)
             
             # Add all code examples to Supabase
-            if code_examples:
+            if code_examples_list:
+                mcp_logger.info(f"Storing {len(code_examples_list)} code examples in Supabase...")
                 add_code_examples_to_supabase(
                     supabase_client, 
                     code_urls, 
                     code_chunk_numbers, 
-                    code_examples, 
+                    code_examples_list, 
                     code_summaries, 
                     code_metadatas,
                     batch_size=batch_size
                 )
+                mcp_logger.info(f"✓ Stored {len(code_examples_list)} code examples in Supabase")
+                code_examples = code_examples_list
+            else:
+                mcp_logger.info("No code examples found in crawled content")
+        else:
+            mcp_logger.info("Code example extraction disabled")
         
-        return json.dumps({
+        response_data = {
             "success": True,
             "url": url,
             "crawl_type": crawl_type,
@@ -766,8 +915,14 @@ async def smart_crawl_url(ctx: Context, url: str, max_depth: int = 3, max_concur
             "code_examples_stored": len(code_examples),
             "sources_updated": len(source_content_map),
             "urls_crawled": [doc['url'] for doc in crawl_results][:5] + (["..."] if len(crawl_results) > 5 else [])
-        }, indent=2)
+        }
+        
+        mcp_logger.info(f"=== smart_crawl_url completed successfully ===")
+        mcp_logger.info(f"Results: {len(crawl_results)} pages, {chunk_count} chunks, {len(code_examples)} code examples, {len(source_content_map)} sources")
+        
+        return json.dumps(response_data, indent=2)
     except Exception as e:
+        mcp_logger.error(f"Exception in smart_crawl_url for URL {url}: {e}")
         return json.dumps({
             "success": False,
             "url": url,
@@ -792,12 +947,17 @@ async def get_available_sources(ctx: Context) -> str:
     Returns:
         JSON string with the list of available sources and their details
     """
+    mcp_logger.info("=== Starting get_available_sources ===")
+    
     try:
         # Get the Supabase client from the lifespan context
+        mcp_logger.debug("Retrieving Supabase client from context...")
         lifespan = ctx.request_context.lifespan_context
         supabase_client = lifespan.supabase_client
+        mcp_logger.debug("✓ Retrieved Supabase client from context")
         
         # Query the sources table directly
+        mcp_logger.info("Querying sources table...")
         result = supabase_client.from_('sources')\
             .select('*')\
             .order('source_id')\
@@ -806,6 +966,7 @@ async def get_available_sources(ctx: Context) -> str:
         # Format the sources with their details
         sources = []
         if result.data:
+            mcp_logger.info(f"Found {len(result.data)} sources in database")
             for source in result.data:
                 sources.append({
                     "source_id": source.get("source_id"),
@@ -814,13 +975,21 @@ async def get_available_sources(ctx: Context) -> str:
                     "created_at": source.get("created_at"),
                     "updated_at": source.get("updated_at")
                 })
+        else:
+            mcp_logger.info("No sources found in database")
         
-        return json.dumps({
+        response_data = {
             "success": True,
             "sources": sources,
             "count": len(sources)
-        }, indent=2)
+        }
+        
+        mcp_logger.info(f"=== get_available_sources completed successfully ===")
+        mcp_logger.info(f"Returned {len(sources)} sources")
+        
+        return json.dumps(response_data, indent=2)
     except Exception as e:
+        mcp_logger.error(f"Exception in get_available_sources: {e}")
         return json.dumps({
             "success": False,
             "error": str(e)
@@ -844,31 +1013,44 @@ async def perform_rag_query(ctx: Context, query: str, source: str = None, match_
     Returns:
         JSON string with the search results
     """
+    mcp_logger.info("=== Starting perform_rag_query ===")
+    mcp_logger.info(f"Query: {query}")
+    mcp_logger.info(f"Source filter: {source}")
+    mcp_logger.info(f"Match count: {match_count}")
+    
     try:
         # Get the Supabase client from the lifespan context
+        mcp_logger.debug("Retrieving Supabase client from context...")
         lifespan = ctx.request_context.lifespan_context
         supabase_client = lifespan.supabase_client
+        mcp_logger.debug("✓ Retrieved Supabase client from context")
         
         # Check if hybrid search is enabled
-        use_hybrid_search = os.getenv("USE_HYBRID_SEARCH", "false") == "true"
+        use_hybrid_search = os.getenv("USE_HYBRID_SEARCH", "false")
+        mcp_logger.debug(f"USE_HYBRID_SEARCH setting: {use_hybrid_search}")
         
         # Prepare filter if source is provided and not empty
         filter_metadata = None
         if source and source.strip():
             filter_metadata = {"source": source}
+            mcp_logger.info(f"Applying source filter: {source}")
         
-        if use_hybrid_search:
+        if use_hybrid_search == "true":
+            mcp_logger.info("Using hybrid search (vector + keyword)")
             # Hybrid search: combine vector and keyword search
             
             # 1. Get vector search results (get more to account for filtering)
+            mcp_logger.debug("Performing vector search...")
             vector_results = search_documents(
                 client=supabase_client,
                 query=query,
                 match_count=match_count * 2,  # Get double to have room for filtering
                 filter_metadata=filter_metadata
             )
+            mcp_logger.debug(f"Vector search returned {len(vector_results)} results")
             
             # 2. Get keyword search results using ILIKE
+            mcp_logger.debug("Performing keyword search...")
             keyword_query = supabase_client.from_('crawled_pages')\
                 .select('id, url, chunk_number, content, metadata, source_id')\
                 .ilike('content', f'%{query}%')
@@ -880,8 +1062,10 @@ async def perform_rag_query(ctx: Context, query: str, source: str = None, match_
             # Execute keyword search
             keyword_response = keyword_query.limit(match_count * 2).execute()
             keyword_results = keyword_response.data if keyword_response.data else []
+            mcp_logger.debug(f"Keyword search returned {len(keyword_results)} results")
             
             # 3. Combine results with preference for items appearing in both
+            mcp_logger.debug("Combining vector and keyword search results...")
             seen_ids = set()
             combined_results = []
             
@@ -921,8 +1105,10 @@ async def perform_rag_query(ctx: Context, query: str, source: str = None, match_
             
             # Use combined results
             results = combined_results[:match_count]
+            mcp_logger.info(f"Hybrid search combined to {len(results)} final results")
             
         else:
+            mcp_logger.info("Using vector search only")
             # Standard vector search only
             results = search_documents(
                 client=supabase_client,
@@ -930,13 +1116,22 @@ async def perform_rag_query(ctx: Context, query: str, source: str = None, match_
                 match_count=match_count,
                 filter_metadata=filter_metadata
             )
+            mcp_logger.info(f"Vector search returned {len(results)} results")
         
         # Apply reranking if enabled
-        use_reranking = os.getenv("USE_RERANKING", "false") == "true"
-        if use_reranking and ctx.request_context.lifespan_context.reranking_model:
+        use_reranking = os.getenv("USE_RERANKING", "false")
+        mcp_logger.debug(f"USE_RERANKING setting: {use_reranking}")
+        
+        if use_reranking == "true" and ctx.request_context.lifespan_context.reranking_model:
+            mcp_logger.info("Applying reranking to search results...")
+            original_count = len(results)
             results = rerank_results(ctx.request_context.lifespan_context.reranking_model, query, results, content_key="content")
+            mcp_logger.info(f"Reranking applied: {original_count} -> {len(results)} results")
+        else:
+            mcp_logger.info("Reranking disabled or model not available")
         
         # Format the results
+        mcp_logger.debug("Formatting search results...")
         formatted_results = []
         for result in results:
             formatted_result = {
@@ -950,16 +1145,22 @@ async def perform_rag_query(ctx: Context, query: str, source: str = None, match_
                 formatted_result["rerank_score"] = result["rerank_score"]
             formatted_results.append(formatted_result)
         
-        return json.dumps({
+        response_data = {
             "success": True,
             "query": query,
             "source_filter": source,
-            "search_mode": "hybrid" if use_hybrid_search else "vector",
-            "reranking_applied": use_reranking and ctx.request_context.lifespan_context.reranking_model is not None,
+            "search_mode": "hybrid" if use_hybrid_search == "true" else "vector",
+            "reranking_applied": use_reranking == "true" and ctx.request_context.lifespan_context.reranking_model is not None,
             "results": formatted_results,
             "count": len(formatted_results)
-        }, indent=2)
+        }
+        
+        mcp_logger.info(f"=== perform_rag_query completed successfully ===")
+        mcp_logger.info(f"Returned {len(formatted_results)} results for query: {query}")
+        
+        return json.dumps(response_data, indent=2)
     except Exception as e:
+        mcp_logger.error(f"Exception in perform_rag_query for query '{query}': {e}")
         return json.dumps({
             "success": False,
             "query": query,
@@ -1180,7 +1381,7 @@ async def check_ai_script_hallucinations(ctx: Context, script_path: str) -> str:
         analysis_result = analyzer.analyze_script(script_path)
         
         if analysis_result.errors:
-            print(f"Analysis warnings for {script_path}: {analysis_result.errors}")
+            mcp_logger.warning(f"Analysis warnings for {script_path}: {analysis_result.errors}")
         
         # Step 2: Validate against knowledge graph
         validation_result = await knowledge_validator.validate_script(analysis_result)
@@ -1731,9 +1932,9 @@ async def parse_github_repository(ctx: Context, repo_url: str) -> str:
         repo_name = validation["repo_name"]
         
         # Parse the repository (this includes cloning, analysis, and Neo4j storage)
-        print(f"Starting repository analysis for: {repo_name}")
+        mcp_logger.info(f"Starting repository analysis for: {repo_name}")
         await repo_extractor.analyze_repository(repo_url)
-        print(f"Repository analysis completed for: {repo_name}")
+        mcp_logger.info(f"Repository analysis completed for: {repo_name}")
         
         # Query Neo4j for statistics about the parsed repository
         async with repo_extractor.driver.session() as session:
@@ -1819,13 +2020,15 @@ async def crawl_markdown_file(crawler: AsyncWebCrawler, url: str) -> List[Dict[s
     Returns:
         List of dictionaries with URL and markdown content
     """
+    mcp_logger.debug(f"Crawling markdown file: {url}")
     crawl_config = CrawlerRunConfig()
 
     result = await crawler.arun(url=url, config=crawl_config)
     if result.success and result.markdown:
+        mcp_logger.debug(f"✓ Successfully crawled markdown file: {url} ({len(result.markdown)} chars)")
         return [{'url': url, 'markdown': result.markdown}]
     else:
-        print(f"Failed to crawl {url}: {result.error_message}")
+        mcp_logger.error(f"Failed to crawl {url}: {result.error_message}")
         return []
 
 async def crawl_batch(crawler: AsyncWebCrawler, urls: List[str], max_concurrent: int = 10) -> List[Dict[str, Any]]:
@@ -1840,6 +2043,8 @@ async def crawl_batch(crawler: AsyncWebCrawler, urls: List[str], max_concurrent:
     Returns:
         List of dictionaries with URL and markdown content
     """
+    mcp_logger.info(f"Starting batch crawl of {len(urls)} URLs with max_concurrent={max_concurrent}")
+    
     crawl_config = CrawlerRunConfig(
                 cache_mode=CacheMode.BYPASS, 
                 stream=False,
@@ -1856,7 +2061,10 @@ async def crawl_batch(crawler: AsyncWebCrawler, urls: List[str], max_concurrent:
     )
 
     results = await crawler.arun_many(urls=urls, config=crawl_config, dispatcher=dispatcher)
-    return [{'url': r.url, 'markdown': r.markdown} for r in results if r.success and r.markdown]
+    successful_results = [{'url': r.url, 'markdown': r.markdown} for r in results if r.success and r.markdown]
+    
+    mcp_logger.info(f"Batch crawl completed: {len(successful_results)}/{len(urls)} URLs successful")
+    return successful_results
 
 async def crawl_recursive_internal_links(crawler: AsyncWebCrawler, start_urls: List[str], max_depth: int = 3, max_concurrent: int = 10) -> List[Dict[str, Any]]:
     """
@@ -1871,6 +2079,8 @@ async def crawl_recursive_internal_links(crawler: AsyncWebCrawler, start_urls: L
     Returns:
         List of dictionaries with URL and markdown content
     """
+    mcp_logger.info(f"Starting recursive crawl from {len(start_urls)} URLs with max_depth={max_depth}, max_concurrent={max_concurrent}")
+    
     run_config = CrawlerRunConfig(cache_mode=CacheMode.BYPASS, stream=False)
     dispatcher = MemoryAdaptiveDispatcher(
         memory_threshold_percent=70.0,
@@ -1889,8 +2099,10 @@ async def crawl_recursive_internal_links(crawler: AsyncWebCrawler, start_urls: L
     for depth in range(max_depth):
         urls_to_crawl = [normalize_url(url) for url in current_urls if normalize_url(url) not in visited]
         if not urls_to_crawl:
+            mcp_logger.debug(f"No new URLs to crawl at depth {depth}")
             break
 
+        mcp_logger.debug(f"Crawling depth {depth}: {len(urls_to_crawl)} URLs")
         results = await crawler.arun_many(urls=urls_to_crawl, config=run_config, dispatcher=dispatcher)
         next_level_urls = set()
 
@@ -1906,8 +2118,24 @@ async def crawl_recursive_internal_links(crawler: AsyncWebCrawler, start_urls: L
                         next_level_urls.add(next_url)
 
         current_urls = next_level_urls
+        mcp_logger.debug(f"Depth {depth} completed: {len(results_all)} total results, {len(next_level_urls)} next level URLs")
 
+    mcp_logger.info(f"Recursive crawl completed: {len(results_all)} total pages crawled across {max_depth} depths")
     return results_all
 
 if __name__ == "__main__":
-    mcp.run()
+    mcp_logger.info("=== MCP Crawl4AI Server Starting ===")
+    mcp_logger.info("Server name: mcp-crawl4ai-rag")
+    mcp_logger.info(f"Python version: {sys.version}")
+    mcp_logger.info(f"Working directory: {os.getcwd()}")
+    
+    try:
+        mcp_logger.info("Starting MCP server...")
+        mcp.run()
+    except KeyboardInterrupt:
+        mcp_logger.info("MCP server stopped by user (KeyboardInterrupt)")
+    except Exception as e:
+        mcp_logger.critical(f"MCP server crashed: {e}")
+        raise
+    finally:
+        mcp_logger.info("=== MCP Crawl4AI Server Shutdown Complete ===")

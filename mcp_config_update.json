@@ -1,0 +1,30 @@
+{
+  "mcpServers": {
+    "browsermcp": {
+      "args": [
+        "@browsermcp/mcp@latest"
+      ],
+      "command": "npx",
+      "disabled": false
+    },
+    "c4ai-sse": {
+      "disabled": false,
+      "type": "sse",
+      "url": "http://localhost:11235/mcp/sse"
+    },
+    "crawl4ai-rag": {
+      "args": [
+        "-m",
+        "src.crawl4ai_mcp"
+      ],
+      "command": "/Users/kapilh/mcp-crawl4ai/.venv-312/bin/python",
+      "disabled": false,
+      "env": {
+        "LOGLEVEL": "INFO",
+        "PYTHONPATH": "/Users/kapilh/mcp-crawl4ai",
+        "PYTHONUNBUFFERED": "1",
+        "TRANSPORT": "stdio"
+      }
+    }
+  }
+}

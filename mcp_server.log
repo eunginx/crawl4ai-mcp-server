@@ -1,1 +1,38 @@
-nohup: python: No such file or directory
+2026-01-17 02:39:51 - root - INFO - setup_logging:139 - MCP Crawl4AI logging initialized - Log file: /Users/kapilh/mcp-crawl4ai/logs/mcp_crawl4ai_20260117_023951.log
+2026-01-17 02:39:51 - root - INFO - setup_logging:140 - Log level: DEBUG - Rotating file handler configured (10MB max, 5 backups)
+2026-01-17 02:39:51 - root - INFO - <module>:2162 - === MCP Crawl4AI Server Starting ===
+2026-01-17 02:39:51 - root - INFO - <module>:2163 - Server name: mcp-crawl4ai-rag
+2026-01-17 02:39:51 - root - INFO - <module>:2164 - Python version: 3.12.12 (main, Jan 11 2026, 16:31:58) [Clang 14.0.0 (clang-1400.0.29.202)]
+2026-01-17 02:39:51 - root - INFO - <module>:2165 - Working directory: /Users/kapilh/mcp-crawl4ai
+2026-01-17 02:39:51 - root - INFO - <module>:2168 - Starting MCP server...
+2026-01-17 02:39:52 - root - INFO - crawl4ai_lifespan:225 - === MCP Server Lifecycle Starting ===
+2026-01-17 02:39:52 - root - INFO - crawl4ai_lifespan:226 - Initializing Crawl4AI components...
+2026-01-17 02:39:52 - root - INFO - crawl4ai_lifespan:238 - Initializing AsyncWebCrawler...
+2026-01-17 02:39:59 - root - INFO - crawl4ai_lifespan:241 - ✓ AsyncWebCrawler initialized successfully
+2026-01-17 02:39:59 - root - INFO - crawl4ai_lifespan:244 - Initializing Supabase client...
+2026-01-17 02:40:00 - root - INFO - crawl4ai_lifespan:246 - ✓ Supabase client initialized
+2026-01-17 02:40:00 - root - INFO - crawl4ai_lifespan:249 - Checking reranking configuration...
+2026-01-17 02:40:00 - root - INFO - crawl4ai_lifespan:263 - Reranking disabled
+2026-01-17 02:40:00 - root - INFO - crawl4ai_lifespan:266 - Checking knowledge graph configuration...
+2026-01-17 02:40:00 - root - INFO - crawl4ai_lifespan:283 - Initializing knowledge graph components...
+2026-01-17 02:40:00 - knowledge_graph_validator - INFO - initialize:122 - Knowledge graph validator initialized
+2026-01-17 02:40:00 - root - INFO - crawl4ai_lifespan:289 - ✓ Knowledge graph validator initialized
+2026-01-17 02:40:00 - parse_repo_into_neo4j - INFO - initialize:408 - Initializing Neo4j connection...
+2026-01-17 02:40:00 - parse_repo_into_neo4j - INFO - initialize:420 - Creating constraints and indexes...
+2026-01-17 02:40:01 - neo4j.notifications - INFO - _handle_warnings:343 - Received notification from DBMS server: <GqlStatusObject gql_status='00NA0', status_description="note: successful completion - index or constraint already exists. The command 'CREATE CONSTRAINT IF NOT EXISTS FOR (e:File) REQUIRE (e.path) IS UNIQUE' has no effect. The index or constraint specified by 'CONSTRAINT constraint_e4ee034b FOR (e:File) REQUIRE (e.path) IS UNIQUE' already exists.", position=None, raw_classification='SCHEMA', classification=<NotificationClassification.SCHEMA: 'SCHEMA'>, raw_severity='INFORMATION', severity=<NotificationSeverity.INFORMATION: 'INFORMATION'>, diagnostic_record={'_classification': 'SCHEMA', '_severity': 'INFORMATION', 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: 'CREATE CONSTRAINT IF NOT EXISTS FOR (f:File) REQUIRE f.path IS UNIQUE'
+2026-01-17 02:40:01 - neo4j.notifications - INFO - _handle_warnings:343 - Received notification from DBMS server: <GqlStatusObject gql_status='00NA0', status_description="note: successful completion - index or constraint already exists. The command 'CREATE CONSTRAINT IF NOT EXISTS FOR (e:Class) REQUIRE (e.full_name) IS UNIQUE' has no effect. The index or constraint specified by 'CONSTRAINT constraint_ed80173d FOR (e:Class) REQUIRE (e.full_name) IS UNIQUE' already exists.", position=None, raw_classification='SCHEMA', classification=<NotificationClassification.SCHEMA: 'SCHEMA'>, raw_severity='INFORMATION', severity=<NotificationSeverity.INFORMATION: 'INFORMATION'>, diagnostic_record={'_classification': 'SCHEMA', '_severity': 'INFORMATION', 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: 'CREATE CONSTRAINT IF NOT EXISTS FOR (c:Class) REQUIRE c.full_name IS UNIQUE'
+2026-01-17 02:40:01 - neo4j.notifications - INFO - _handle_warnings:343 - Received notification from DBMS server: <GqlStatusObject gql_status='00NA0', status_description="note: successful completion - index or constraint already exists. The command 'CREATE RANGE INDEX IF NOT EXISTS FOR (e:File) ON (e.name)' has no effect. The index or constraint specified by 'RANGE INDEX index_6599df39 FOR (e:File) ON (e.name)' already exists.", position=None, raw_classification='SCHEMA', classification=<NotificationClassification.SCHEMA: 'SCHEMA'>, raw_severity='INFORMATION', severity=<NotificationSeverity.INFORMATION: 'INFORMATION'>, diagnostic_record={'_classification': 'SCHEMA', '_severity': 'INFORMATION', 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: 'CREATE INDEX IF NOT EXISTS FOR (f:File) ON (f.name)'
+2026-01-17 02:40:01 - neo4j.notifications - INFO - _handle_warnings:343 - Received notification from DBMS server: <GqlStatusObject gql_status='00NA0', status_description="note: successful completion - index or constraint already exists. The command 'CREATE RANGE INDEX IF NOT EXISTS FOR (e:Class) ON (e.name)' has no effect. The index or constraint specified by 'RANGE INDEX index_fcd84e64 FOR (e:Class) ON (e.name)' already exists.", position=None, raw_classification='SCHEMA', classification=<NotificationClassification.SCHEMA: 'SCHEMA'>, raw_severity='INFORMATION', severity=<NotificationSeverity.INFORMATION: 'INFORMATION'>, diagnostic_record={'_classification': 'SCHEMA', '_severity': 'INFORMATION', 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: 'CREATE INDEX IF NOT EXISTS FOR (c:Class) ON (c.name)'
+2026-01-17 02:40:02 - neo4j.notifications - INFO - _handle_warnings:343 - Received notification from DBMS server: <GqlStatusObject gql_status='00NA0', status_description="note: successful completion - index or constraint already exists. The command 'CREATE RANGE INDEX IF NOT EXISTS FOR (e:Method) ON (e.name)' has no effect. The index or constraint specified by 'RANGE INDEX index_89dd18c9 FOR (e:Method) ON (e.name)' already exists.", position=None, raw_classification='SCHEMA', classification=<NotificationClassification.SCHEMA: 'SCHEMA'>, raw_severity='INFORMATION', severity=<NotificationSeverity.INFORMATION: 'INFORMATION'>, diagnostic_record={'_classification': 'SCHEMA', '_severity': 'INFORMATION', 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: 'CREATE INDEX IF NOT EXISTS FOR (m:Method) ON (m.name)'
+2026-01-17 02:40:02 - parse_repo_into_neo4j - INFO - initialize:435 - Neo4j initialized successfully
+2026-01-17 02:40:02 - root - INFO - crawl4ai_lifespan:295 - ✓ Repository extractor initialized
+2026-01-17 02:40:02 - root - INFO - crawl4ai_lifespan:306 - === MCP Server Initialization Complete ===
+2026-01-17 02:40:02 - root - INFO - crawl4ai_lifespan:317 - === MCP Server Cleanup Starting ===
+2026-01-17 02:40:02 - root - INFO - crawl4ai_lifespan:319 - Cleaning up AsyncWebCrawler...
+2026-01-17 02:40:02 - root - INFO - crawl4ai_lifespan:321 - ✓ AsyncWebCrawler cleaned up
+2026-01-17 02:40:02 - root - INFO - crawl4ai_lifespan:325 - Cleaning up knowledge graph validator...
+2026-01-17 02:40:02 - root - INFO - crawl4ai_lifespan:327 - ✓ Knowledge graph validator closed
+2026-01-17 02:40:02 - root - INFO - crawl4ai_lifespan:333 - Cleaning up repository extractor...
+2026-01-17 02:40:03 - root - INFO - crawl4ai_lifespan:335 - ✓ Repository extractor closed
+2026-01-17 02:40:03 - root - INFO - crawl4ai_lifespan:339 - === MCP Server Lifecycle Complete ===
+2026-01-17 02:40:03 - root - INFO - <module>:2176 - === MCP Crawl4AI Server Shutdown Complete ===

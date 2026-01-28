@@ -14,7 +14,7 @@ NC='\033[0m' # No Color
 
 # Configuration
 PROJECT_DIR="/Users/kapilh/mcp-crawl4ai"
-VENV_DIR="$PROJECT_DIR/.venv-311"
+VENV_DIR="$PROJECT_DIR/.venv-312"
 LOG_FILE="$PROJECT_DIR/mcp_server.log"
 PID_FILE="$PROJECT_DIR/mcp_server.pid"
 
