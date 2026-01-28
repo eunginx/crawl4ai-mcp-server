@@ -7,3 +7,6 @@ repos
 test_script_hallucination*
 .venv-311
 .venv-312
+
+# Transient PID file
+mcp_server.pid
